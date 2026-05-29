@@ -1391,5 +1391,53 @@ func ConvertSpec(context *cli.Context, spec *specs.Spec, sbox *sysbox.Sysbox) er
 		cfgSyscontSyscallTraps(sysMgr)
 	}
 
+	if err := cfgBinfmtMirrorHook(spec); err != nil {
+		return fmt.Errorf("failed to configure binfmt mirror hook: %v", err)
+	}
+
+	return nil
+}
+
+// cfgBinfmtMirrorHook injects an OCI prestart hook that mirrors the
+// host's binfmt_misc qemu-* registrations into the container's per-
+// user-namespace binfmt_misc instance, then remounts that instance
+// read-only. Enabled when sysbox-mgr is running with
+// --mirror-host-binfmt-misc, signaled by the presence of the sentinel
+// conf file at /var/lib/sysbox/binfmt-mirror.conf.
+//
+// File-based sentinel (not gRPC) so this fork stays independently
+// deployable from sysbox-mgr — sysbox-mgr writes the conf at startup,
+// sysbox-runc just checks file existence at ConvertSpec time. No
+// sysbox-ipc protocol changes required.
+//
+// The hook binary path is fixed; sysbox-mgr's Makefile + the ami-build
+// install_sysbox.sh both install it at /usr/bin/sysbox-binfmt-mirror.sh.
+// If the binary is missing at hook-fire time, runc fails container
+// creation — so the sentinel file existence is a contract that the
+// script is also installed (sysbox-mgr's install path guarantees this).
+//
+// Required on Kubernetes 1.33+ with hostUsers:false where docker/setup
+// -qemu-action's in-pod tonistiigi/binfmt --install would otherwise
+// overwrite the per-userns binfmt_misc with non-P-flag registrations,
+// breaking cross-arch container exec. With the hook + ro remount, the
+// in-pod register-write fails with EROFS and the POCF entries we
+// mirrored from the host stay intact.
+func cfgBinfmtMirrorHook(spec *specs.Spec) error {
+	const sentinel = "/var/lib/sysbox/binfmt-mirror.conf"
+	const hookPath = "/usr/bin/sysbox-binfmt-mirror.sh"
+
+	if _, err := os.Stat(sentinel); err != nil {
+		if os.IsNotExist(err) {
+			return nil // sysbox-mgr running without --mirror-host-binfmt-misc; no-op
+		}
+		return fmt.Errorf("stat %s: %w", sentinel, err)
+	}
+
+	if spec.Hooks == nil {
+		spec.Hooks = &specs.Hooks{}
+	}
+	spec.Hooks.Prestart = append(spec.Hooks.Prestart, specs.Hook{
+		Path: hookPath,
+	})
 	return nil
 }
