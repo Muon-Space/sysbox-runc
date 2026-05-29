@@ -1403,7 +1403,10 @@ func ConvertSpec(context *cli.Context, spec *specs.Spec, sbox *sysbox.Sysbox) er
 // user-namespace binfmt_misc instance, then remounts that instance
 // read-only. Enabled when sysbox-mgr is running with
 // --mirror-host-binfmt-misc, signaled by the presence of the sentinel
-// conf file at /var/lib/sysbox/binfmt-mirror.conf.
+// conf file at /run/sysbox-binfmt-mirror.conf. (Sentinel lives in
+// /run/ rather than /var/lib/sysbox/ because sysbox-mgr's
+// setupWorkDirs() does os.RemoveAll(sysboxLibDir) at startup, wiping
+// any conf we'd write there.)
 //
 // File-based sentinel (not gRPC) so this fork stays independently
 // deployable from sysbox-mgr — sysbox-mgr writes the conf at startup,
@@ -1423,7 +1426,7 @@ func ConvertSpec(context *cli.Context, spec *specs.Spec, sbox *sysbox.Sysbox) er
 // in-pod register-write fails with EROFS and the POCF entries we
 // mirrored from the host stay intact.
 func cfgBinfmtMirrorHook(spec *specs.Spec) error {
-	const sentinel = "/var/lib/sysbox/binfmt-mirror.conf"
+	const sentinel = "/run/sysbox-binfmt-mirror.conf"
 	const hookPath = "/usr/bin/sysbox-binfmt-mirror.sh"
 
 	if _, err := os.Stat(sentinel); err != nil {
